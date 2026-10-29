@@ -52,9 +52,9 @@ fi
 GIT_REV=$(git -C "$SRC" rev-parse HEAD 2>/dev/null || echo "v$TRACY_VERSION")
 
 log "Toolchain"
-gcc --version | head -1
-cmake --version | head -1
-ldd --version | head -1
+gcc --version | sed -n 1p
+cmake --version | sed -n 1p
+ldd --version | sed -n 1p
 
 COMMON_FLAGS=(
     -G Ninja
@@ -191,8 +191,8 @@ cat > "$STAGE/BUILDINFO" <<INFO
 Tracy version : $TRACY_VERSION ($GIT_REV)
 Variant       : $VARIANT
 Built on      : $OS_NAME ($ARCH)
-Compiler      : $(gcc --version | head -1)
-glibc         : $(ldd --version | head -1 | awk '{print $NF}')
+Compiler      : $(gcc --version | sed -n 1p)
+glibc         : $(ldd --version | sed -n 1p | awk '{print $NF}')
 Build date    : $(date -u +%Y-%m-%dT%H:%M:%SZ)
 INFO
 

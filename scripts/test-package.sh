@@ -69,7 +69,7 @@ for tool in tracy-capture tracy-csvexport tracy-import-chrome tracy-import-fuchs
     if ! echo "$out" | grep -qi "tracy\|usage"; then
         echo "$tool failed:"; echo "$out"; exit 1
     fi
-    echo "$tool: $(echo "$out" | head -1)"
+    echo "$tool: $(echo "$out" | sed -n 1p)"
 done
 
 case "$PKG_NAME" in

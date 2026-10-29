@@ -158,8 +158,8 @@ jobs:
             echo "| Distribution | X11 (legacy) | Wayland |"
             echo "|---|---|---|"
             for d in ubuntu-20.04 ubuntu-22.04 ubuntu-24.04 rhel-8 rhel-9; do
-              x11=$(ls tracy-*-"$d"-x11-*.tar.gz 2>/dev/null | head -1)
-              wl=$(ls tracy-*-"$d"-wayland-*.tar.gz 2>/dev/null | head -1)
+              x11=$(ls tracy-*-"$d"-x11-*.tar.gz 2>/dev/null | sed -n 1p)
+              wl=$(ls tracy-*-"$d"-wayland-*.tar.gz 2>/dev/null | sed -n 1p)
               echo "| ${d} | ${x11:-n/a} | ${wl:-n/a} |"
             done
             echo

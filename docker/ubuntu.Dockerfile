@@ -25,7 +25,7 @@ RUN apt-get update \
         ca-certificates curl git file xz-utils pkg-config make patch \
         python3 python3-venv gnupg \
  && update-ca-certificates \
- && if ! apt-cache show "g++-${GCC_VERSION}" >/dev/null 2>&1; then \
+ && if ! apt-get install -s "gcc-${GCC_VERSION}" "g++-${GCC_VERSION}" >/dev/null 2>&1; then \
         . /etc/os-release \
      && mkdir -p /etc/apt/keyrings \
      && curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x${TOOLCHAIN_PPA_FINGERPRINT}" \
