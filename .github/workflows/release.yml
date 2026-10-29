@@ -1,0 +1,182 @@
+name: build-and-release
+
+# Builds Tracy binaries (X11 legacy and Wayland flavours) inside containers
+# for each supported distribution and publishes them as a GitHub release.
+#
+# - push / pull request : build everything, keep the packages as workflow
+#                         artifacts (no release).
+# - push of a tag v*    : build and publish a release for that tag.
+#                         The tag is v<tracy version>[-<package revision>],
+#                         e.g. v0.14.1 or v0.14.1-2.
+# - manual run          : build, and publish if "publish" is checked.
+
+on:
+  push:
+    branches: [ main, master, 'claude/**' ]
+    tags: [ 'v*' ]
+    paths-ignore: [ '**.md' ]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      tracy_version:
+        description: Tracy version to build (empty = content of TRACY_VERSION)
+        required: false
+        default: ''
+      publish:
+        description: Publish a GitHub release (tag v<version>)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      publish: ${{ steps.version.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: version
+        env:
+          INPUT_VERSION: ${{ inputs.tracy_version }}
+          INPUT_PUBLISH: ${{ inputs.publish }}
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = tag ]; then
+            tag="${GITHUB_REF_NAME}"
+            version="${tag#v}"
+            version="${version%%-*}"
+            publish=true
+          else
+            version="${INPUT_VERSION:-$(cat TRACY_VERSION)}"
+            tag="v${version}"
+            publish="${INPUT_PUBLISH:-false}"
+          fi
+          if ! echo "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Invalid Tracy version '$version'"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          echo "Tracy $version, release tag $tag, publish=$publish" >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    needs: setup
+    name: ${{ matrix.distro }} / ${{ matrix.variant }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        distro: [ ubuntu-20.04, ubuntu-22.04, ubuntu-24.04, rhel-8, rhel-9 ]
+        variant: [ x11, wayland ]
+        include:
+          - distro: ubuntu-20.04
+            dockerfile: docker/ubuntu.Dockerfile
+            base_image: ubuntu:20.04
+          - distro: ubuntu-22.04
+            dockerfile: docker/ubuntu.Dockerfile
+            base_image: ubuntu:22.04
+          - distro: ubuntu-24.04
+            dockerfile: docker/ubuntu.Dockerfile
+            base_image: ubuntu:24.04
+          - distro: rhel-8
+            dockerfile: docker/rhel.Dockerfile
+            base_image: quay.io/rockylinux/rockylinux:8
+          - distro: rhel-9
+            dockerfile: docker/rhel.Dockerfile
+            base_image: quay.io/rockylinux/rockylinux:9
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build container image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          build-args: BASE_IMAGE=${{ matrix.base_image }}
+          tags: tracy-build:${{ matrix.distro }}
+          load: true
+          cache-from: type=gha,scope=${{ matrix.distro }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.distro }}
+
+      - name: Build Tracy
+        run: |
+          mkdir -p dist
+          docker run --rm \
+            -e TRACY_VERSION='${{ needs.setup.outputs.version }}' \
+            -v "$PWD:/src:ro" \
+            -v "$PWD/dist:/dist" \
+            tracy-build:${{ matrix.distro }} \
+            /src/scripts/build-tracy.sh ${{ matrix.variant }} ${{ matrix.distro }} /dist
+          ls -l dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tracy-${{ needs.setup.outputs.version }}-${{ matrix.distro }}-${{ matrix.variant }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    needs: [ setup, build ]
+    if: needs.setup.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Prepare release notes
+        env:
+          VERSION: ${{ needs.setup.outputs.version }}
+        run: |
+          cd dist
+          cat *.sha256 > SHA256SUMS
+          rm -f *.sha256
+          {
+            echo "Tracy profiler ${VERSION} built from https://github.com/wolfpld/tracy/releases/tag/v${VERSION}"
+            echo
+            echo "| Distribution | X11 (legacy) | Wayland |"
+            echo "|---|---|---|"
+            for d in ubuntu-20.04 ubuntu-22.04 ubuntu-24.04 rhel-8 rhel-9; do
+              x11=$(ls tracy-*-"$d"-x11-*.tar.gz 2>/dev/null | head -1)
+              wl=$(ls tracy-*-"$d"-wayland-*.tar.gz 2>/dev/null | head -1)
+              echo "| ${d} | ${x11:-n/a} | ${wl:-n/a} |"
+            done
+            echo
+            echo "Each archive contains \`tracy-profiler\` and the command line utilities"
+            echo "(\`tracy-capture\`, \`tracy-capture-daemon\`, \`tracy-csvexport\`,"
+            echo "\`tracy-import-chrome\`, \`tracy-import-fuchsia\`, \`tracy-merge\`, \`tracy-update\`)."
+            echo "Wayland archives bundle libwayland in \`lib/\`. RHEL packages are built on Rocky Linux"
+            echo "and work on RHEL, AlmaLinux, Rocky Linux and other compatible systems."
+            echo
+            echo '```'
+            cat SHA256SUMS
+            echo '```'
+          } > ../release-notes.md
+          ls -l
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.setup.outputs.tag }}
+          name: Tracy ${{ needs.setup.outputs.version }}
+          body_path: release-notes.md
+          target_commitish: ${{ github.sha }}
+          files: |
+            dist/*.tar.gz
+            dist/SHA256SUMS
+          fail_on_unmatched_files: true
