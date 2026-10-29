@@ -36,7 +36,7 @@ RUN apt-get update \
  && apt-get update \
  && apt-get install -y --no-install-recommends \
         "gcc-${GCC_VERSION}" "g++-${GCC_VERSION}" binutils \
-        libegl-dev libgl-dev libxkbcommon-dev libdbus-1-dev libssl-dev \
+        libegl-dev libgl-dev libxkbcommon-dev libdbus-1-dev libssl-dev libgnutls28-dev \
         libffi-dev libexpat1-dev \
         libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxext-dev \
  && update-alternatives --install /usr/bin/gcc gcc "/usr/bin/gcc-${GCC_VERSION}" 100 \

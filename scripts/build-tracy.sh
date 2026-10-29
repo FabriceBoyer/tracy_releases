@@ -43,7 +43,7 @@ log() { printf '\n==> %s\n' "$*"; }
 if [ -n "${TRACY_SRC:-}" ]; then
     SRC=$(cd "$TRACY_SRC" && pwd)
 else
-    SRC="$WORK_DIR/tracy"
+    SRC="$WORK_DIR/tracy-$TRACY_VERSION"
     if [ ! -d "$SRC/.git" ]; then
         log "Cloning Tracy v$TRACY_VERSION"
         git clone --depth 1 --branch "v$TRACY_VERSION" "$TRACY_REPO" "$SRC"
@@ -104,17 +104,28 @@ PROFILER_FLAGS=(
     -DDOWNLOAD_LIBCURL=ON
     -DDOWNLOAD_PUGIXML=ON
 )
+# The vendored libcurl requires OpenSSL >= 3.0. Ubuntu 20.04 and RHEL 8 only
+# have OpenSSL 1.1.1, use the system GnuTLS as TLS backend there instead.
+if ! pkg-config --atleast-version=3.0.0 openssl; then
+    echo "OpenSSL $(pkg-config --modversion openssl) < 3.0, building libcurl with GnuTLS"
+    PROFILER_FLAGS+=(-DCURL_USE_OPENSSL=OFF -DCURL_USE_GNUTLS=ON)
+fi
 if [ "$VARIANT" = x11 ]; then
     PROFILER_FLAGS+=(
         -DLEGACY=ON
         -DDOWNLOAD_GLFW=ON
-        # Pure X11 build: do not let GLFW pick its Wayland backend.
+        # Pure X11 build: no Wayland support in GLFW nor in the file dialog.
         -DGLFW_BUILD_WAYLAND=OFF
         -DGLFW_BUILD_X11=ON
+        -DNFD_WAYLAND=OFF
     )
 else
     PROFILER_FLAGS+=(
         -DLEGACY=OFF
+        # Older EGL headers (Ubuntu 20.04) include Xlib.h, whose macros
+        # (None, Always, ...) clash with Tracy's code, unless told not to.
+        -DCMAKE_C_FLAGS=-DEGL_NO_X11
+        -DCMAKE_CXX_FLAGS=-DEGL_NO_X11
         -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON
         -DCMAKE_INSTALL_RPATH='$ORIGIN/../lib'
     )
@@ -129,19 +140,20 @@ cmake --build "$BUILD/profiler" --parallel "$JOBS"
 # ---------------------------------------------------------------------------
 # Command line utilities (independent from the windowing system)
 
+TOOLS_BUILD="$WORK_DIR/build-tools"
 TOOLS=(capture csvexport import merge update)
 for tool in "${TOOLS[@]}"; do
     log "Building $tool"
-    cmake -S "$SRC/$tool" -B "$BUILD/$tool" "${COMMON_FLAGS[@]}"
-    cmake --build "$BUILD/$tool" --parallel "$JOBS"
+    cmake -S "$SRC/$tool" -B "$TOOLS_BUILD/$tool" "${COMMON_FLAGS[@]}"
+    cmake --build "$TOOLS_BUILD/$tool" --parallel "$JOBS"
 done
 
 # ---------------------------------------------------------------------------
 # Package
 
-NAME="tracy-$TRACY_VERSION-$DISTRO-$VARIANT-$ARCH"
-STAGE="$WORK_DIR/stage/$NAME"
-log "Packaging $NAME"
+PKG_NAME="tracy-$TRACY_VERSION-$DISTRO-$VARIANT-$ARCH"
+STAGE="$WORK_DIR/stage/$PKG_NAME"
+log "Packaging $PKG_NAME"
 rm -rf "$STAGE"
 mkdir -p "$STAGE/bin" \
     "$STAGE/share/applications" \
@@ -151,11 +163,11 @@ mkdir -p "$STAGE/bin" \
     "$STAGE/share/doc/tracy"
 
 cp "$BUILD/profiler/tracy-profiler" "$STAGE/bin/"
-cp "$BUILD/capture/tracy-capture" "$BUILD/capture/tracy-capture-daemon" "$STAGE/bin/"
-cp "$BUILD/csvexport/tracy-csvexport" "$STAGE/bin/"
-cp "$BUILD/import/tracy-import-chrome" "$BUILD/import/tracy-import-fuchsia" "$STAGE/bin/"
-cp "$BUILD/merge/tracy-merge" "$STAGE/bin/"
-cp "$BUILD/update/tracy-update" "$STAGE/bin/"
+cp "$TOOLS_BUILD/capture/tracy-capture" "$TOOLS_BUILD/capture/tracy-capture-daemon" "$STAGE/bin/"
+cp "$TOOLS_BUILD/csvexport/tracy-csvexport" "$STAGE/bin/"
+cp "$TOOLS_BUILD/import/tracy-import-chrome" "$TOOLS_BUILD/import/tracy-import-fuchsia" "$STAGE/bin/"
+cp "$TOOLS_BUILD/merge/tracy-merge" "$STAGE/bin/"
+cp "$TOOLS_BUILD/update/tracy-update" "$STAGE/bin/"
 strip "$STAGE"/bin/*
 
 if [ "$VARIANT" = wayland ]; then
@@ -174,11 +186,11 @@ cp "$SRC/icon/application-tracy.svg" "$STAGE/share/icons/hicolor/scalable/mimety
 cp "$SRC/LICENSE" "$STAGE/LICENSE"
 cp "$SRC/NEWS" "$STAGE/share/doc/tracy/NEWS"
 
-. /etc/os-release
+OS_NAME=$(. /etc/os-release && echo "$PRETTY_NAME")
 cat > "$STAGE/BUILDINFO" <<INFO
 Tracy version : $TRACY_VERSION ($GIT_REV)
 Variant       : $VARIANT
-Built on      : $PRETTY_NAME ($ARCH)
+Built on      : $OS_NAME ($ARCH)
 Compiler      : $(gcc --version | head -1)
 glibc         : $(ldd --version | head -1 | awk '{print $NF}')
 Build date    : $(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -190,8 +202,7 @@ if ldd "$STAGE/bin/tracy-profiler" | grep -q "not found"; then
     echo "Unresolved libraries" >&2
     exit 1
 fi
-"$STAGE/bin/tracy-capture" -h >/dev/null 2>&1 || true
 
-tar -C "$WORK_DIR/stage" -czf "$OUT_DIR/$NAME.tar.gz" "$NAME"
-(cd "$OUT_DIR" && sha256sum "$NAME.tar.gz" > "$NAME.tar.gz.sha256")
-log "Done: $OUT_DIR/$NAME.tar.gz"
+tar -C "$WORK_DIR/stage" -czf "$OUT_DIR/$PKG_NAME.tar.gz" "$PKG_NAME"
+(cd "$OUT_DIR" && sha256sum "$PKG_NAME.tar.gz" > "$PKG_NAME.tar.gz.sha256")
+log "Done: $OUT_DIR/$PKG_NAME.tar.gz"

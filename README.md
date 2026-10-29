@@ -51,21 +51,22 @@ All third-party libraries Tracy vendors (capstone, zstd, freetype, libcurl,
 pugixml, GLFW, ImGui, …) are linked statically. The remaining dependencies
 are standard system libraries:
 
-- both flavours: `libEGL`/`libGL` (libglvnd / mesa), `libdbus-1`, OpenSSL
-  (`libssl`, `libcrypto`), `libffi` (wayland), `libxkbcommon` (wayland),
-  `libX11` & co. (x11);
+- both flavours: `libEGL`/`libGL` (libglvnd / Mesa), `libdbus-1`;
+- TLS for libcurl: OpenSSL 3 on Ubuntu 22.04/24.04 and RHEL 9, GnuTLS on
+  Ubuntu 20.04 and RHEL 8 (their OpenSSL 1.1.1 is too old for curl 8.x);
+- wayland: `libxkbcommon`, `libffi`; x11: `libX11` and its extensions;
 - an XDG desktop portal is used for the file dialogs.
 
-On a minimal Ubuntu install for instance:
+These are present on any desktop installation. On a minimal system:
 
 ```bash
-sudo apt install libegl1 libgl1 libdbus-1-3 libxkbcommon0 libssl3   # libssl1.1 on 20.04
+sudo apt install libegl1 libgl1 libdbus-1-3 libxkbcommon0 libgnutls30 openssl \
+    libx11-6 libxrandr2 libxinerama1 libxcursor1 libxi6
 ```
 
-On RHEL:
-
 ```bash
-sudo dnf install libglvnd-egl libglvnd-glx dbus-libs libxkbcommon openssl-libs
+sudo dnf install libglvnd-egl libglvnd-glx dbus-libs libxkbcommon openssl-libs gnutls \
+    libX11 libXrandr libXinerama libXcursor libXi
 ```
 
 ## Building locally
@@ -78,14 +79,27 @@ Only Docker (or Podman, with `CONTAINER_ENGINE=podman`) is required.
 ./build.sh all                       # everything
 ```
 
-Packages are written to `dist/`. Useful environment variables:
+Packages are written to `dist/`; intermediate files are kept in the docker
+volume `tracy-work-<distro>` to speed up rebuilds. Useful environment
+variables:
 
 | Variable           | Description                                              |
 |--------------------|----------------------------------------------------------|
 | `TRACY_VERSION`    | Tracy version to build (default: `TRACY_VERSION` file)   |
-| `BASE_IMAGE`       | Override the base image (e.g. a registry mirror)         |
+| `BASE_IMAGE`       | Override the base image (e.g. a registry mirror), only with a single distribution |
 | `JOBS`             | Build parallelism inside the container                   |
 | `CONTAINER_ENGINE` | `docker` (default) or `podman`                           |
+
+To smoke test a package on a pristine installation of its distribution:
+
+```bash
+docker run --rm -v "$PWD:/src:ro" ubuntu:20.04 \
+    /src/scripts/test-package.sh /src/dist/tracy-0.14.1-ubuntu-20.04-x11-x86_64.tar.gz
+```
+
+It installs only the runtime libraries, checks that all shared libraries
+resolve, runs the command line tools and, for the X11 flavour, runs
+`tracy-profiler` for 10 seconds on Xvfb.
 
 If the build host sits behind a TLS intercepting proxy, drop its CA
 certificate(s) as `*.crt` files into `docker/certs/` (ignored by git) before
@@ -99,6 +113,7 @@ building the images.
 | `docker/rhel.Dockerfile`     | RHEL-compatible build image (gcc-toolset-13, …)    |
 | `docker/common-tools.sh`     | Installs CMake / Meson / Ninja in the images       |
 | `scripts/build-tracy.sh`     | Runs inside the container: clone, build, package   |
+| `scripts/test-package.sh`    | Smoke test of a package on a clean distro image    |
 | `build.sh`                   | Local entry point (builds image + runs container)  |
 | `.github/workflows/release.yml` | CI: build matrix and GitHub release             |
 
@@ -122,7 +137,8 @@ building the images.
 ## Releasing
 
 The workflow [`release.yml`](.github/workflows/release.yml) builds all 10
-packages (5 distributions × 2 flavours), each in its own container.
+packages (5 distributions × 2 flavours), each in its own container, and
+smoke tests each one on a clean container of its target distribution.
 
 - Every push / pull request: builds and uploads the packages as workflow
   artifacts.

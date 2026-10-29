@@ -4,9 +4,11 @@
 # Usage: ./build.sh <distro|all> [x11|wayland|all]
 #   distro: ubuntu-20.04 ubuntu-22.04 ubuntu-24.04 rhel-8 rhel-9
 #
-# Packages are written to ./dist. Environment overrides:
+# Packages are written to ./dist. Intermediate build files are kept in the
+# docker volume tracy-work-<distro> to speed up rebuilds (remove it with
+# "docker volume rm tracy-work-<distro>"). Environment overrides:
 #   CONTAINER_ENGINE  docker (default) or podman
-#   BASE_IMAGE        base image to use instead of the default for the distro
+#   BASE_IMAGE        base image to use instead of the default (single distro)
 #   TRACY_VERSION     Tracy version (default: content of TRACY_VERSION)
 #   JOBS              build parallelism inside the container
 set -euo pipefail
@@ -18,7 +20,7 @@ VARIANTS=(x11 wayland)
 ENGINE=${CONTAINER_ENGINE:-docker}
 TRACY_VERSION=${TRACY_VERSION:-$(cat TRACY_VERSION)}
 
-usage() { sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0" >&2; exit 1; }
 
 # Prints "<dockerfile> <default base image>" for a distro tag.
 distro_config() {
@@ -33,6 +35,11 @@ distro_config() {
 if [ "$1" = all ]; then distros=("${DISTROS[@]}"); else distros=("$1"); fi
 if [ "${2:-all}" = all ]; then variants=("${VARIANTS[@]}"); else variants=("$2"); fi
 
+for distro in "${distros[@]}"; do distro_config "$distro" >/dev/null; done
+for variant in "${variants[@]}"; do
+    case "$variant" in x11|wayland) ;; *) echo "Unknown variant: $variant" >&2; usage ;; esac
+done
+
 mkdir -p dist
 for distro in "${distros[@]}"; do
     read -r dockerfile default_base < <(distro_config "$distro")
@@ -46,6 +53,7 @@ for distro in "${distros[@]}"; do
             ${JOBS:+-e JOBS="$JOBS"} \
             -v "$PWD:/src:ro" \
             -v "$PWD/dist:/dist" \
+            -v "tracy-work-$distro:/tmp/tracy-build" \
             "$image" \
             /src/scripts/build-tracy.sh "$variant" "$distro" /dist
     done

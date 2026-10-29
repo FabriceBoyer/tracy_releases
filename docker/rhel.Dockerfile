@@ -26,7 +26,7 @@ RUN update-ca-trust \
         ca-certificates curl git file xz tar gzip make patch pkgconf-pkg-config \
         ${PY_PKG} \
         libglvnd-devel mesa-libEGL-devel mesa-libGL-devel \
-        libxkbcommon-devel dbus-devel openssl-devel libffi-devel expat-devel \
+        libxkbcommon-devel dbus-devel openssl-devel gnutls-devel libffi-devel expat-devel \
         libX11-devel libXrandr-devel libXinerama-devel libXcursor-devel libXi-devel libXext-devel \
  && dnf clean all \
  && ln -sf "$(command -v python3.11 || command -v python3)" /usr/local/bin/build-python

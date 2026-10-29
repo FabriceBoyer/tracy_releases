@@ -119,6 +119,12 @@ jobs:
             /src/scripts/build-tracy.sh ${{ matrix.variant }} ${{ matrix.distro }} /dist
           ls -l dist
 
+      - name: Smoke test on a clean ${{ matrix.distro }}
+        run: |
+          docker run --rm -v "$PWD:/src:ro" ${{ matrix.base_image }} \
+            /src/scripts/test-package.sh \
+            /src/dist/tracy-${{ needs.setup.outputs.version }}-${{ matrix.distro }}-${{ matrix.variant }}-x86_64.tar.gz
+
       - uses: actions/upload-artifact@v4
         with:
           name: tracy-${{ needs.setup.outputs.version }}-${{ matrix.distro }}-${{ matrix.variant }}
